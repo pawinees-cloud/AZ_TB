@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AR Alphabet Speaking Game</title>
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Mitr:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Mitr', 'sans-serif'] },
+                    colors: {
+                        primary: '#FF9A9E',
+                        secondary: '#FECFEF',
+                        glass: 'rgba(255, 255, 255, 0.45)',
+                        glassBorder: 'rgba(255, 255, 255, 0.6)'
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- MediaPipe & Confetti -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+
+    <style>
+        body { font-family: 'Mitr', sans-serif; user-select: none; }
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.5);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.8);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15);
+        }
+        .btn-press { transition: transform 0.1s, box-shadow 0.1s; }
+        .btn-press:active { transform: translateY(4px); box-shadow: none !important; }
+        
+        /* Mirror Video and Canvas */
+        #output_canvas {
+            transform: scaleX(-1);
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        #input_video { display: none; } /* Hide original video, only show canvas */
+        
+        .pulse-anim { animation: pulse 1.5s infinite; }
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+    </style>
+</head>
+<body class="h-screen w-screen overflow-hidden bg-gradient-to-br from-[#ffc3a0] to-[#ffafbd] text-gray-800">
+
+    <div id="messageBox" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 backdrop-blur-sm">
+        <div class="glass-panel p-8 rounded-3xl w-11/12 max-w-md text-center transform transition-all scale-95">
+            <h2 id="msgTitle" class="text-2xl font-bold text-red-500 mb-4">แจ้งเตือน</h2>
+            <p id="msgText" class="text-lg mb-6">ข้อความ</p>
+            <button onclick="closeMessage()" class="w-full py-3 bg-blue-500 text-white rounded-xl font-bold btn-press shadow-[0_4px_0_#2563eb]">ตกลง</button>
+        </div>
+    </div>
+
+    <div id="startScreen" class="fixed inset-0 z-40 flex flex-col items-center justify-center bg-gradient-to-br from-[#ff9a9e] to-[#fecfef]">
+        <div class="glass-panel p-10 rounded-3xl text-center max-w-lg w-11/12">
+            <div class="text-6xl mb-4">👑</div>
+            <h1 class="text-4xl md:text-5xl font-bold text-pink-600 mb-4 drop-shadow-sm">A-Z AR Speaking Game</h1>
+            <p class="text-lg text-gray-700 mb-8">ฝึกพูดภาษาอังกฤษ A-Z ให้ชัดเจน<br>พร้อมระบบ AR เอฟเฟกต์สุดน่ารัก!</p>
+            
+            <div class="bg-white/60 rounded-xl p-4 mb-8 text-sm text-left text-gray-600 space-y-2">
+                <p>📷 กรุณาอนุญาตให้ใช้ <b>กล้อง</b> เพื่อเล่น AR</p>
+                <p>🎤 กรุณาอนุญาตให้ใช้ <b>ไมโครโฟน</b> เพื่อรับเสียง</p>
+            </div>
+
+            <button id="startBtn" onclick="initGame()" class="pulse-anim w-full py-4 bg-gradient-to-r from-pink-400 to-orange-400 text-white text-2xl rounded-2xl font-bold btn-press shadow-[0_6px_0_#d97706]">
+                เริ่มเล่นเกมเลย!
+            </button>
+            <p id="loadingText" class="hidden text-pink-600 font-bold mt-4 animate-pulse">กำลังโหลดระบบกล้องและเสียง...</p>
+        </div>
+    </div>
+
+    <div id="endScreen" class="fixed inset-0 z-40 hidden flex-col items-center justify-center bg-gradient-to-br from-[#a18cd1] to-[#fbc2eb]">
+        <div class="glass-panel p-10 rounded-3xl text-center max-w-lg w-11/12">
+            <div id="endIcon" class="text-7xl mb-4">🎉</div>
+            <h1 id="endTitle" class="text-5xl font-bold text-purple-700 mb-2">สรุปคะแนน!</h1>
+            <div class="text-6xl font-bold text-pink-500 my-6 bg-white/50 rounded-2xl py-4"><span id="finalScore">0</span><span class="text-3xl text-gray-600">/26</span></div>
+            <p id="endMessage" class="text-xl text-gray-700 mb-8">เก่งมากเลย!</p>
+            
+            <div class="flex gap-4">
+                <button onclick="resetGame()" class="flex-1 py-3 bg-pink-500 text-white text-xl rounded-xl font-bold btn-press shadow-[0_4px_0_#be185d]">เล่นอีกครั้ง</button>
+                <button onclick="closeGame()" class="flex-1 py-3 bg-gray-500 text-white text-xl rounded-xl font-bold btn-press shadow-[0_4px_0_#374151]">ปิดเกม</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="gameContainer" class="flex flex-col md:flex-row h-full w-full hidden opacity-0 transition-opacity duration-1000">
+        
+        <!-- Left Side: UI -->
+        <div class="w-full md:w-5/12 h-1/2 md:h-full p-4 md:p-8 flex flex-col z-10">
+            <div class="glass-panel w-full h-full rounded-3xl flex flex-col p-6 relative">
+                
+                <!-- Header -->
+                <div class="flex justify-between items-center mb-4 bg-white/40 p-3 rounded-2xl">
+                    <div class="text-lg font-bold text-pink-600">ข้อที่: <span id="uiProgress" class="text-2xl">1/26</span></div>
+                    <div class="text-lg font-bold text-orange-500">คะแนน: <span id="uiScore" class="text-2xl">0</span></div>
+                </div>
+
+                <!-- Main Letter Area -->
+                <div class="flex-1 flex flex-col items-center justify-center relative">
+                    <div id="statusBadge" class="absolute top-0 px-6 py-2 rounded-full text-white font-bold text-lg bg-gray-400 transition-colors">
+                        กดปุ่มเล่นเพื่อเริ่ม
+                    </div>
+                    <h1 id="targetLetter" class="text-[12rem] leading-none font-bold text-pink-500 drop-shadow-md">A</h1>
+                    <h2 id="targetThai" class="text-4xl text-gray-600 font-medium mt-2">เอ</h2>
+                    
+                    <div id="speechText" class="mt-4 text-xl h-8 text-gray-500 italic">...</div>
+                </div>
+
+                <!-- Accuracy Meter -->
+                <div class="mt-6 mb-4">
+                    <div class="flex justify-between text-sm font-bold text-gray-600 mb-1">
+                        <span>ความแม่นยำ</span>
+                        <span id="meterText">0%</span>
+                    </div>
+                    <div class="w-full h-6 bg-gray-200 rounded-full overflow-hidden border-2 border-white/50 shadow-inner">
+                        <div id="meterBar" class="h-full bg-gray-400 w-0 transition-all duration-300"></div>
+                    </div>
+                </div>
+
+                <!-- Controls -->
+                <div class="flex justify-center gap-3 mt-auto">
+                    <button id="btnPlay" onclick="startGameFlow()" class="flex-1 py-3 bg-green-400 text-white rounded-xl font-bold btn-press shadow-[0_4px_0_#16a34a] text-lg">▶ เล่น</button>
+                    <button id="btnStop" onclick="stopGameFlow()" class="flex-1 py-3 bg-red-400 text-white rounded-xl font-bold btn-press shadow-[0_4px_0_#dc2626] text-lg opacity-50 pointer-events-none">■ หยุด</button>
+                    <button id="btnNext" onclick="nextLetter()" class="flex-1 py-3 bg-blue-400 text-white rounded-xl font-bold btn-press shadow-[0_4px_0_#2563eb] text-lg opacity-50 pointer-events-none">⏭ ถัดไป</button>
+                </div>
+
+                <!-- Close Game -->
+                <button onclick="confirmClose()" class="absolute -top-3 -left-3 w-10 h-10 bg-white text-red-500 rounded-full font-bold shadow-lg flex items-center justify-center btn-press border-2 border-red-500">X</button>
+            </div>
+        </div>
+
+        <!-- Right Side: Camera & AR -->
+        <div class="w-full md:w-7/12 h-1/2 md:h-full relative bg-gray-900 rounded-b-3xl md:rounded-l-none md:rounded-r-3xl overflow-hidden shadow-2xl">
+            <video id="input_video" class="absolute hidden" autoplay playsinline></video>
+            <canvas id="output_canvas" class="absolute w-full h-full object-cover"></canvas>
+            
+            <!-- Camera Loading Overlay -->
+            <div id="camLoading" class="absolute inset-0 flex items-center justify-center bg-gray-900/80 text-white z-10 flex-col">
+                <div class="w-12 h-12 border-4 border-pink-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+                <p>กำลังเปิดกล้อง...</p>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // Alphabet Data
+        const alphabetData = [
+            { letter: 'A', thai: 'เอ', sounds: ['a', 'ay', 'eight', 'hey', 'eh'] },
+            { letter: 'B', thai: 'บี', sounds: ['b', 'bee', 'be'] },
+            { letter: 'C', thai: 'ซี', sounds: ['c', 'see', 'sea', 'she'] },
+            { letter: 'D', thai: 'ดี', sounds: ['d', 'dee', 'the'] },
+            { letter: 'E', thai: 'อี', sounds: ['e', 'ee', 'eat'] },
+            { letter: 'F', thai: 'เอฟ', sounds: ['f', 'ef', 'eff'] },
+            { letter: 'G', thai: 'จี', sounds: ['g', 'jee', 'gee'] },
+            { letter: 'H', thai: 'เอช', sounds: ['h', 'aitch', 'hate', 'age'] },
+            { letter: 'I', thai: 'ไอ', sounds: ['i', 'eye', 'hi'] },
+            { letter: 'J', thai: 'เจ', sounds: ['j', 'jay'] },
+            { letter: 'K', thai: 'เค', sounds: ['k', 'kay', 'okay'] },
+            { letter: 'L', thai: 'แอล', sounds: ['l', 'el', 'ell'] },
+            { letter: 'M', thai: 'เอ็ม', sounds: ['m', 'em', 'am'] },
+            { letter: 'N', thai: 'เอ็น', sounds: ['n', 'en', 'an', 'end'] },
+            { letter: 'O', thai: 'โอ', sounds: ['o', 'oh', 'or'] },
+            { letter: 'P', thai: 'พี', sounds: ['p', 'pee', 'pea'] },
+            { letter: 'Q', thai: 'คิว', sounds: ['q', 'cue', 'queue', 'kill'] },
+            { letter: 'R', thai: 'อาร์', sounds: ['r', 'ar', 'are', 'ah'] },
+            { letter: 'S', thai: 'เอส', sounds: ['s', 'es', 'ess', 'is'] },
+            { letter: 'T', thai: 'ที', sounds: ['t', 'tee', 'tea'] },
+            { letter: 'U', thai: 'ยู', sounds: ['u', 'you'] },
+            { letter: 'V', thai: 'วี', sounds: ['v', 'vee', 'we'] },
+            { letter: 'W', thai: 'ดับเบิลยู', sounds: ['w', 'double u', 'double you'] },
+            { letter: 'X', thai: 'เอ็กซ์', sounds: ['x', 'ex', 'egg'] },
+            { letter: 'Y', thai: 'วาย', sounds: ['y', 'why', 'wine'] },
+            { letter: 'Z', thai: 'ซี / แซด', sounds: ['z', 'zee', 'zed', 'see'] }
+        ];
+
+        // Game State
+        let currentIdx = 0;
+        let score = 0;
+        let isPlaying = false;
+        let isListening = false;
+        let flowTimeout = null;
+        let countdownInterval = null;
+        let arState = 'none'; // 'none', 'correct', 'wrong'
+        let arTimer = null;
+
+        // UI Elements
+        const elTargetLetter = document.getElementById('targetLetter');
+        const elTargetThai = document.getElementById('targetThai');
+        const elUiProgress = document.getElementById('uiProgress');
+        const elUiScore = document.getElementById('uiScore');
+        const elStatusBadge = document.getElementById('statusBadge');
+        const elMeterBar = document.getElementById('meterBar');
+        const elMeterText = document.getElementById('meterText');
+        const elSpeechText = document.getElementById('speechText');
+        
+        const btnPlay = document.getElementById('btnPlay');
+        const btnStop = document.getElementById('btnStop');
+        const btnNext = document.getElementById('btnNext');
+
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        let audioCtx;
+
+        function initAudio() {
+            if (!audioCtx) audioCtx = new AudioContext();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+        }
+
+        function playTone(frequency, type, duration, vol = 0.1) {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            osc.type = type;
+            osc.frequency.setValueAtTime(frequency, audioCtx.currentTime);
+            
+            gainNode.gain.setValueAtTime(vol, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+            
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            osc.start();
+            osc.stop(audioCtx.currentTime + duration);
+        }
+
+        const Sound = {
+            click: () => playTone(600, 'sine', 0.1),
+            tick: () => playTone(440, 'sine', 0.1),
+            go: () => playTone(880, 'sine', 0.3),
+            correct: () => {
+                playTone(523.25, 'sine', 0.2); // C5
+                setTimeout(() => playTone(659.25, 'sine', 0.2), 100); // E5
+                setTimeout(() => playTone(783.99, 'sine', 0.4), 200); // G5
+            },
+            wrong: () => {
+                playTone(150, 'sawtooth', 0.3, 0.2);
+                setTimeout(() => playTone(100, 'sawtooth', 0.4, 0.2), 200);
+            },
+            warning: () => {
+                playTone(300, 'square', 0.15, 0.05);
+                setTimeout(() => playTone(300, 'square', 0.15, 0.05), 200);
+            },
+            fanfare: () => {
+                [0, 150, 300, 450].forEach(t => setTimeout(() => playTone(523.25, 'square', 0.1), t));
+                setTimeout(() => playTone(659.25, 'square', 0.4), 600);
+            },
+            gameOver: () => {
+                playTone(300, 'triangle', 0.4);
+                setTimeout(() => playTone(250, 'triangle', 0.4), 300);
+                setTimeout(() => playTone(200, 'triangle', 0.8), 600);
+            }
+        };
+
+        let recognition;
+        let isRecogSupported = false;
+
+        function initSpeech() {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (!SpeechRecognition) {
+                showMessage("ข้อผิดพลาด", "เบราว์เซอร์ของคุณไม่รองรับระบบสั่งงานด้วยเสียง แนะนำให้ใช้ Google Chrome");
+                return false;
+            }
+            
+            recognition = new SpeechRecognition();
+            recognition.continuous = false;
+            recognition.interimResults = true; // For immediate feedback
+            recognition.lang = 'en-US';
+            isRecogSupported = true;
+
+            recognition.onresult = (event) => {
+                if (!isListening) return;
+                let interimTranscript = '';
+                let finalTranscript = '';
+
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) {
+                        finalTranscript += event.results[i][0].transcript;
+                    } else {
+                        interimTranscript += event.results[i][0].transcript;
+                    }
+                }
+                
+                const spoken = finalTranscript || interimTranscript;
+                elSpeechText.textContent = `"${spoken}"`;
+                
+                // If we got a final result, immediately process it and stop listening
+                if (finalTranscript) {
+                    processSpeechResult(finalTranscript.trim().toLowerCase());
+                    stopListening();
+                }
+            };
+
+            recognition.onerror = (event) => {
+                console.warn("Speech Error:", event.error);
+                if(event.error === 'not-allowed') {
+                    showMessage("ไมค์ถูกบล็อก", "กรุณาอนุญาตการเข้าถึงไมโครโฟน");
+                    stopGameFlow();
+                }
+                // Ignore no-speech errors, we handle it with a timer
+            };
+
+            recognition.onend = () => {
+                // If stopped naturally without final result, check timer in game loop
+            };
+            return true;
+        }
+
+        function startListening() {
+            if(!isRecogSupported) return;
+            try {
+                elSpeechText.textContent = "...";
+                recognition.start();
+            } catch(e) { console.log("Recog already started"); }
+        }
+
+        function stopListening() {
+            if(!isRecogSupported) return;
+            try { recognition.stop(); } catch(e){}
+        }
+
+        // Calculate similarity for kindergarteners (fuzzy phonetics)
+        function calculateSimilarity(spoken, targetObj) {
+            if (!spoken) return 0;
+            
+            // Clean spoken text
+            const cleanedSpoken = spoken.replace(/[^a-z0-9 ]/gi, '').trim().toLowerCase();
+            const words = cleanedSpoken.split(' ');
+            const targetLetter = targetObj.letter.toLowerCase();
+            
+            let maxScore = 0;
+
+            // Check each word spoken
+            for (let word of words) {
+                let wordScore = 0;
+                
+                // 1. Exact letter match or exact phonetic match = 100%
+                if (word === targetLetter || targetObj.sounds.includes(word)) {
+                    wordScore = 100;
+                } 
+                // 2. Starts with target letter = 85% (Generous for kids)
+                else if (word.startsWith(targetLetter)) {
+                    wordScore = 85;
+                }
+                // 3. Contains target letter or phonetic = 60%
+                else if (word.includes(targetLetter) || targetObj.sounds.some(s => word.includes(s))) {
+                    wordScore = 60;
+                }
+                
+                if (wordScore > maxScore) maxScore = wordScore;
+            }
+            
+            // Add some randomness if score is high to make meter look dynamic (e.g. 85-98)
+            if (maxScore >= 80) {
+                 maxScore = Math.floor(Math.random() * (100 - 85 + 1)) + 85;
+            } else if (maxScore > 0 && maxScore < 80) {
+                 maxScore = Math.floor(Math.random() * (79 - 40 + 1)) + 40;
+            }
+
+            return maxScore;
+        }
+
+        const videoElement = document.getElementById('input_video');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        let faceMesh;
+        let camera;
+        let latestResults = null;
+
+        function initMediaPipe() {
+            faceMesh = new FaceMesh({locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
+            }});
+            
+            faceMesh.setOptions({
+                maxNumFaces: 1,
+                refineLandmarks: true,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+            
+            faceMesh.onResults(onResults);
+            
+            camera = new Camera(videoElement, {
+                onFrame: async () => { await faceMesh.send({image: videoElement}); },
+                width: 640, height: 480
+            });
+            
+            camera.start()
+                .then(() => { document.getElementById('camLoading').classList.add('hidden'); })
+                .catch(err => {
+                    document.getElementById('camLoading').classList.add('hidden');
+                    showMessage("กล้องไม่พร้อม", "ไม่สามารถเปิดกล้องได้ กรุณาตรวจสอบการอนุญาต");
+                });
+        }
+
+        function onResults(results) {
+            latestResults = results;
+            
+            // Adjust canvas size to match video aspect ratio while filling container
+            if(canvasElement.width !== videoElement.videoWidth) {
+                canvasElement.width = videoElement.videoWidth;
+                canvasElement.height = videoElement.videoHeight;
+            }
+
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            
+            // Draw video (it is mirrored via CSS, so we draw normally here)
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+                const landmarks = results.multiFaceLandmarks[0];
+                const width = canvasElement.width;
+                const height = canvasElement.height;
+
+                if (arState === 'correct') {
+                    drawCrown(landmarks, width, height);
+                } else if (arState === 'wrong') {
+                    drawTears(landmarks, width, height);
+                    drawVignette(width, height);
+                }
+            }
+            canvasCtx.restore();
+        }
+
+        function drawCrown(landmarks, w, h) {
+            // Use forehead point (10) and sides (21, 251) to estimate position and scale
+            const center = landmarks[10]; 
+            const left = landmarks[21];
+            const right = landmarks[251];
+            
+            const faceWidth = Math.abs((right.x - left.x) * w);
+            const crownWidth = faceWidth * 1.5;
+            const crownHeight = crownWidth * 0.6;
+            
+            const x = center.x * w;
+            const y = (center.y * h) - (crownHeight * 0.8); // Shift up
+
+            canvasCtx.save();
+            canvasCtx.translate(x, y);
+            
+            // Draw simple gold crown
+            canvasCtx.fillStyle = '#FFD700';
+            canvasCtx.strokeStyle = '#B8860B';
+            canvasCtx.lineWidth = 3;
+            canvasCtx.beginPath();
+            canvasCtx.moveTo(-crownWidth/2, crownHeight/2); // Bottom left
+            canvasCtx.lineTo(crownWidth/2, crownHeight/2);  // Bottom right
+            canvasCtx.lineTo(crownWidth/2 + crownWidth*0.1, -crownHeight/2); // Top right peak
+            canvasCtx.lineTo(crownWidth/4, 0); // Inner valley right
+            canvasCtx.lineTo(0, -crownHeight); // Center peak
+            canvasCtx.lineTo(-crownWidth/4, 0); // Inner valley left
+            canvasCtx.lineTo(-crownWidth/2 - crownWidth*0.1, -crownHeight/2); // Top left peak
+            canvasCtx.closePath();
+            
+            canvasCtx.fill();
+            canvasCtx.stroke();
+            
+            // Add some jewels
+            canvasCtx.fillStyle = '#FF0000';
+            canvasCtx.beginPath(); canvasCtx.arc(0, -crownHeight*0.8, crownWidth*0.08, 0, Math.PI*2); canvasCtx.fill();
+            canvasCtx.fillStyle = '#0000FF';
+            canvasCtx.beginPath(); canvasCtx.arc(-crownWidth*0.4, -crownHeight*0.3, crownWidth*0.06, 0, Math.PI*2); canvasCtx.fill();
+            canvasCtx.beginPath(); canvasCtx.arc(crownWidth*0.4, -crownHeight*0.3, crownWidth*0.06, 0, Math.PI*2); canvasCtx.fill();
+
+            canvasCtx.restore();
+        }
+
+        function drawTears(landmarks, w, h) {
+            // Below eyes (145 left, 374 right)
+            const leftEyeBottom = landmarks[145];
+            const rightEyeBottom = landmarks[374];
+            const faceWidth = Math.abs((landmarks[454].x - landmarks[234].x) * w);
+            const dropSize = faceWidth * 0.05;
+
+            canvasCtx.fillStyle = 'rgba(0, 150, 255, 0.7)';
+            
+            // Drop 1 (Left)
+            drawTeardrop(leftEyeBottom.x * w, leftEyeBottom.y * h + dropSize, dropSize);
+            drawTeardrop(leftEyeBottom.x * w - dropSize, leftEyeBottom.y * h + dropSize*3, dropSize*0.8);
+            
+            // Drop 2 (Right)
+            drawTeardrop(rightEyeBottom.x * w, rightEyeBottom.y * h + dropSize, dropSize);
+            drawTeardrop(rightEyeBottom.x * w + dropSize, rightEyeBottom.y * h + dropSize*3, dropSize*0.8);
+        }
+
+        function drawTeardrop(x, y, size) {
+            canvasCtx.beginPath();
+            canvasCtx.moveTo(x, y - size);
+            canvasCtx.bezierCurveTo(x + size, y, x + size, y + size, x, y + size);
+            canvasCtx.bezierCurveTo(x - size, y + size, x - size, y, x, y - size);
+            canvasCtx.fill();
+        }
+
+        function drawVignette(w, h) {
+            const gradient = canvasCtx.createRadialGradient(w/2, h/2, Math.min(w,h)/4, w/2, h/2, Math.max(w,h)/1.5);
+            gradient.addColorStop(0, 'rgba(0,0,0,0)');
+            gradient.addColorStop(1, 'rgba(0,0,0,0.6)');
+            canvasCtx.fillStyle = gradient;
+            canvasCtx.fillRect(0, 0, w, h);
+        }
+
+        async function initGame() {
+            Sound.click();
+            document.getElementById('startBtn').classList.add('hidden');
+            document.getElementById('loadingText').classList.remove('hidden');
+            
+            initAudio();
+            const speechReady = initSpeech();
+            
+            if(!speechReady) return;
+
+            // Trigger permissions implicitly by calling initialize
+            try {
+                await navigator.mediaDevices.getUserMedia({video: true, audio: true});
+                initMediaPipe();
+                
+                // Hide Start Screen, Show Game
+                document.getElementById('startScreen').classList.add('hidden');
+                const gameContainer = document.getElementById('gameContainer');
+                gameContainer.classList.remove('hidden');
+                
+                // Small delay to allow CSS rendering before fading in
+                setTimeout(() => {
+                    gameContainer.classList.remove('opacity-0');
+                    loadLetter(0);
+                }, 100);
+
+            } catch (err) {
+                showMessage("สิทธิถูกปฏิเสธ", "คุณต้องอนุญาตกล้องและไมค์เพื่อเล่นเกมนี้");
+                document.getElementById('startBtn').classList.remove('hidden');
+                document.getElementById('loadingText').classList.add('hidden');
+            }
+        }
+
+        function updateUI() {
+            elUiProgress.textContent = `${currentIdx + 1}/${alphabetData.length}`;
+            elUiScore.textContent = score;
+            const currentObj = alphabetData[currentIdx];
+            elTargetLetter.textContent = currentObj.letter;
+            elTargetThai.textContent = currentObj.thai;
+            elSpeechText.textContent = "...";
+            setMeter(0, 'gray');
+        }
+
+        function setMeter(percent, color) {
+            elMeterBar.style.width = `${percent}%`;
+            elMeterText.textContent = `${percent}%`;
+            elMeterBar.className = `h-full transition-all duration-500 bg-${color}-500`;
+        }
+
+        function setStatus(text, color) {
+            elStatusBadge.textContent = text;
+            elStatusBadge.className = `absolute top-0 px-6 py-2 rounded-full text-white font-bold text-lg bg-${color}-500 transition-colors shadow-lg`;
+        }
+
+        function loadLetter(index) {
+            currentIdx = index;
+            updateUI();
+            setStatus("กดปุ่มเล่นเพื่อเริ่ม", "gray");
+            toggleButtons(true, false, false);
+            arState = 'none';
+        }
+
+        function toggleButtons(play, stop, next) {
+            btnPlay.classList.toggle('opacity-50', !play); btnPlay.classList.toggle('pointer-events-none', !play);
+            btnStop.classList.toggle('opacity-50', !stop); btnStop.classList.toggle('pointer-events-none', !stop);
+            btnNext.classList.toggle('opacity-50', !next); btnNext.classList.toggle('pointer-events-none', !next);
+        }
+
+        function startGameFlow() {
+            Sound.click();
+            if(isPlaying) return;
+            isPlaying = true;
+            toggleButtons(false, true, false);
+            arState = 'none';
+            setMeter(0, 'gray');
+            elSpeechText.textContent = "...";
+            
+            let count = 3;
+            setStatus(`เตรียมตัว... ${count}`, "yellow");
+            Sound.tick();
+
+            countdownInterval = setInterval(() => {
+                count--;
+                if(count > 0) {
+                    setStatus(`เตรียมตัว... ${count}`, "yellow");
+                    Sound.tick();
+                } else {
+                    clearInterval(countdownInterval);
+                    startListeningPhase();
+                }
+            }, 1000);
+        }
+
+        function startListeningPhase() {
+            setStatus("พูดเลย! (5 วิ)", "blue");
+            Sound.go();
+            isListening = true;
+            startListening();
+
+            // Wait 5 seconds for speech
+            flowTimeout = setTimeout(() => {
+                if(isListening) {
+                    stopListening();
+                    processSpeechResult(""); // Force timeout result
+                }
+            }, 5000);
+        }
+
+        function processSpeechResult(spokenText) {
+            if(!isListening) return; // Prevent double processing
+            isListening = false;
+            clearTimeout(flowTimeout);
+
+            if (!spokenText) {
+                // Warning: No sound
+                setStatus("ไม่ได้ยินเสียง เอาใหม่!", "yellow");
+                Sound.warning();
+                isPlaying = false;
+                toggleButtons(true, false, false);
+                return;
+            }
+
+            const targetObj = alphabetData[currentIdx];
+            const similarity = calculateSimilarity(spokenText, targetObj);
+            
+            setMeter(similarity, similarity >= 80 ? 'green' : 'red');
+
+            if (similarity >= 80) {
+                setStatus("ผ่าน! เก่งมาก", "green");
+                Sound.correct();
+                score++;
+                elUiScore.textContent = score;
+                arState = 'correct';
+                fireConfetti();
+            } else {
+                setStatus("ไม่ผ่าน พยายามใหม่นะ", "red");
+                Sound.wrong();
+                arState = 'wrong';
+            }
+
+            isPlaying = false;
+            toggleButtons(false, false, true);
+
+            // Auto next after 3 seconds
+            arTimer = setTimeout(() => {
+                if(currentIdx < alphabetData.length - 1) {
+                    nextLetter();
+                } else {
+                    showEndScreen();
+                }
+            }, 3000);
+        }
+
+        function stopGameFlow() {
+            Sound.click();
+            isPlaying = false;
+            isListening = false;
+            clearInterval(countdownInterval);
+            clearTimeout(flowTimeout);
+            clearTimeout(arTimer);
+            stopListening();
+            setStatus("หยุดแล้ว", "gray");
+            toggleButtons(true, false, true); // Allow retry or next
+            arState = 'none';
+        }
+
+        function nextLetter() {
+            Sound.click();
+            clearTimeout(arTimer);
+            if (currentIdx < alphabetData.length - 1) {
+                loadLetter(currentIdx + 1);
+            } else {
+                showEndScreen();
+            }
+        }
+
+        function fireConfetti() {
+            confetti({
+                particleCount: 100,
+                spread: 70,
+                origin: { y: 0.6 },
+                colors: ['#FF9A9E', '#FECFEF', '#FFD700']
+            });
+        }
+
+        function showEndScreen() {
+            stopGameFlow();
+            document.getElementById('gameContainer').classList.add('hidden');
+            const endScreen = document.getElementById('endScreen');
+            endScreen.classList.remove('hidden');
+            endScreen.classList.add('flex');
+            
+            document.getElementById('finalScore').textContent = score;
+            
+            if (score >= 20) {
+                Sound.fanfare();
+                document.getElementById('endIcon').textContent = "🏆";
+                document.getElementById('endTitle').textContent = "ยอดเยี่ยมมาก!";
+                document.getElementById('endMessage').textContent = "หนูเก่งภาษาอังกฤษสุดๆ ไปเลย!";
+                fireConfetti();
+                setTimeout(fireConfetti, 1000);
+            } else {
+                Sound.gameOver();
+                document.getElementById('endIcon').textContent = "😊";
+                document.getElementById('endTitle').textContent = "พยายามได้ดี!";
+                document.getElementById('endMessage').textContent = "ฝึกฝนอีกนิด จะต้องเก่งขึ้นแน่นอน!";
+            }
+        }
+
+        function resetGame() {
+            Sound.click();
+            document.getElementById('endScreen').classList.add('hidden');
+            document.getElementById('endScreen').classList.remove('flex');
+            document.getElementById('gameContainer').classList.remove('hidden');
+            score = 0;
+            loadLetter(0);
+        }
+
+        // Custom Message Box instead of alert()
+        function showMessage(title, text) {
+            document.getElementById('msgTitle').textContent = title;
+            document.getElementById('msgText').textContent = text;
+            const box = document.getElementById('messageBox');
+            box.classList.remove('hidden');
+            box.classList.add('flex');
+            setTimeout(() => { box.firstElementChild.classList.remove('scale-95'); }, 10);
+        }
+
+        function closeMessage() {
+            Sound.click();
+            const box = document.getElementById('messageBox');
+            box.firstElementChild.classList.add('scale-95');
+            setTimeout(() => { 
+                box.classList.add('hidden'); 
+                box.classList.remove('flex');
+            }, 150);
+        }
+
+        function confirmClose() {
+            Sound.click();
+            // Custom simplified confirmation using state
+            showMessage("ยืนยัน", "ต้องการปิดเกมและกลับหน้าแรกใช่หรือไม่?");
+            // Override message box button action temporarily
+            const btn = document.querySelector('#messageBox button');
+            const oldClick = btn.onclick;
+            btn.onclick = () => {
+                closeGame();
+                closeMessage();
+                btn.onclick = oldClick; // Restore
+            };
+        }
+
+        function closeGame() {
+            Sound.click();
+            location.reload(); // Simple way to clean up resources and return to start
+        }
+
+    </script>
+</body>
+</html>
